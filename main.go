@@ -1,0 +1,177 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
+)
+
+// HistoryContract defines the Smart Contract structure
+type HistoryContract struct {
+	contractapi.Contract
+}
+
+// VerificationRecord represents the data shared between parties
+type VerificationRecord struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Party       string `json:"party"`     // The organization/user currently acting
+	Status      string `json:"status"`    // e.g., "CREATED", "VERIFIED", "REJECTED"
+	Timestamp   string `json:"timestamp"` // Application level timestamp
+}
+
+// HistoryQueryResult structure used for returning history data
+type HistoryQueryResult struct {
+	TxId      string              `json:"txId"`
+	Timestamp time.Time           `json:"timestamp"`
+	IsDelete  bool                `json:"isDelete"`
+	Record    *VerificationRecord `json:"record"`
+}
+
+// InitLedger adds a base set of records to the ledger
+func (s *HistoryContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
+	records := []VerificationRecord{
+		{ID: "REC001", Description: "Initial Contract Draft", Party: "Org1", Status: "CREATED", Timestamp: time.Now().Format(time.RFC3339)},
+		{ID: "REC002", Description: "Shipping Manifest", Party: "Org2", Status: "PENDING", Timestamp: time.Now().Format(time.RFC3339)},
+	}
+
+	for _, record := range records {
+		assetJSON, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+
+		err = ctx.GetStub().PutState(record.ID, assetJSON)
+		if err != nil {
+			return fmt.Errorf("failed to put to world state. %v", err)
+		}
+	}
+
+	return nil
+}
+
+// CreateRecord issues a new record to the world state
+func (s *HistoryContract) CreateRecord(ctx contractapi.TransactionContextInterface, id string, description string, status string) error {
+	exists, err := s.RecordExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("the record %s already exists", id)
+	}
+
+	// Get the identity of the submitter (the Party)
+	clientIdentity, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("failed to get client identity: %v", err)
+	}
+
+	record := VerificationRecord{
+		ID:          id,
+		Description: description,
+		Party:       clientIdentity,
+		Status:      status,
+		Timestamp:   time.Now().Format(time.RFC3339),
+	}
+
+	recordJSON, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+
+	return ctx.GetStub().PutState(id, recordJSON)
+}
+
+// UpdateRecord allows a party to update the status or description, creating a new history entry
+func (s *HistoryContract) UpdateRecord(ctx contractapi.TransactionContextInterface, id string, description string, status string) error {
+	exists, err := s.RecordExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("the record %s does not exist", id)
+	}
+
+	clientIdentity, _ := ctx.GetClientIdentity().GetMSPID()
+
+	// Overwrite the record. Fabric automatically keeps the old version in the history.
+	updatedRecord := VerificationRecord{
+		ID:          id,
+		Description: description,
+		Party:       clientIdentity,
+		Status:      status,
+		Timestamp:   time.Now().Format(time.RFC3339),
+	}
+
+	recordJSON, err := json.Marshal(updatedRecord)
+	if err != nil {
+		return err
+	}
+
+	return ctx.GetStub().PutState(id, recordJSON)
+}
+
+// GetRecordHistory returns the chain of custody/history for a specific record
+// This is the core function for your verification use case.
+func (s *HistoryContract) GetRecordHistory(ctx contractapi.TransactionContextInterface, id string) ([]HistoryQueryResult, error) {
+
+	// GetHistoryForKey is a Fabric API that retrieves all state changes for a key
+	resultsIterator, err := ctx.GetStub().GetHistoryForKey(id)
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
+
+	var records []HistoryQueryResult
+
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
+
+		var verificationRecord *VerificationRecord
+		if !response.IsDelete {
+			if err := json.Unmarshal(response.Value, &verificationRecord); err != nil {
+				return nil, err
+			}
+		}
+
+		// Convert Fabric timestamp to Go time
+		timestamp := response.Timestamp.AsTime()
+
+		record := HistoryQueryResult{
+			TxId:      response.TxId,
+			Timestamp: timestamp,
+			IsDelete:  response.IsDelete,
+			Record:    verificationRecord,
+		}
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+// RecordExists returns true when asset with given ID exists in world state
+func (s *HistoryContract) RecordExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
+	recordJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return false, fmt.Errorf("failed to read from world state: %v", err)
+	}
+
+	return recordJSON != nil, nil
+}
+
+func main() {
+	chaincode, err := contractapi.NewChaincode(&HistoryContract{})
+	if err != nil {
+		fmt.Printf("Error creating history-verification chaincode: %s", err.Error())
+		return
+	}
+
+	if err := chaincode.Start(); err != nil {
+		fmt.Printf("Error starting history-verification chaincode: %s", err.Error())
+	}
+}
