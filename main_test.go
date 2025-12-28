@@ -55,6 +55,14 @@ func (m *MockChaincodeStub) GetHistoryForKey(key string) (shim.HistoryQueryItera
 	return args.Get(0).(shim.HistoryQueryIteratorInterface), args.Error(1)
 }
 
+func (m *MockChaincodeStub) GetTxTimestamp() (*timestamppb.Timestamp, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*timestamppb.Timestamp), args.Error(1)
+}
+
 // MockClientIdentity mocks the client identity (MSP ID)
 type MockClientIdentity struct {
 	cid.ClientIdentity
@@ -105,6 +113,7 @@ func TestCreateRecord(t *testing.T) {
 	// Expectation: Record does not exist yet
 	stub.On("GetState", "REC001").Return(nil, nil)
 	clientIdentity.On("GetMSPID").Return("Org1MSP", nil)
+	stub.On("GetTxTimestamp").Return(timestamppb.Now(), nil)
 	stub.On("PutState", "REC001", mock.Anything).Return(nil)
 
 	t.Log("Invoking CreateRecord smart contract function...")

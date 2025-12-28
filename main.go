@@ -32,9 +32,16 @@ type HistoryQueryResult struct {
 
 // InitLedger adds a base set of records to the ledger
 func (s *HistoryContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
+	// Use Transaction Timestamp for determinism, not time.Now()
+	txTimestamp, err := ctx.GetStub().GetTxTimestamp()
+	if err != nil {
+		return err
+	}
+	timestampStr := time.Unix(txTimestamp.Seconds, int64(txTimestamp.Nanos)).Format(time.RFC3339)
+
 	records := []VerificationRecord{
-		{ID: "REC001", Description: "Initial Contract Draft", Party: "Org1", Status: "CREATED", Timestamp: time.Now().Format(time.RFC3339)},
-		{ID: "REC002", Description: "Shipping Manifest", Party: "Org2", Status: "PENDING", Timestamp: time.Now().Format(time.RFC3339)},
+		{ID: "REC001", Description: "Initial Contract Draft", Party: "Org1", Status: "CREATED", Timestamp: timestampStr},
+		{ID: "REC002", Description: "Shipping Manifest", Party: "Org2", Status: "PENDING", Timestamp: timestampStr},
 	}
 
 	for _, record := range records {
@@ -68,12 +75,18 @@ func (s *HistoryContract) CreateRecord(ctx contractapi.TransactionContextInterfa
 		return fmt.Errorf("failed to get client identity: %v", err)
 	}
 
+	// Use Transaction Timestamp
+	txTimestamp, err := ctx.GetStub().GetTxTimestamp()
+	if err != nil {
+		return err
+	}
+
 	record := VerificationRecord{
 		ID:          id,
 		Description: description,
 		Party:       clientIdentity,
 		Status:      status,
-		Timestamp:   time.Now().Format(time.RFC3339),
+		Timestamp:   time.Unix(txTimestamp.Seconds, int64(txTimestamp.Nanos)).Format(time.RFC3339),
 	}
 
 	recordJSON, err := json.Marshal(record)
@@ -96,13 +109,19 @@ func (s *HistoryContract) UpdateRecord(ctx contractapi.TransactionContextInterfa
 
 	clientIdentity, _ := ctx.GetClientIdentity().GetMSPID()
 
+	// Use Transaction Timestamp
+	txTimestamp, err := ctx.GetStub().GetTxTimestamp()
+	if err != nil {
+		return err
+	}
+
 	// Overwrite the record. Fabric automatically keeps the old version in the history.
 	updatedRecord := VerificationRecord{
 		ID:          id,
 		Description: description,
 		Party:       clientIdentity,
 		Status:      status,
-		Timestamp:   time.Now().Format(time.RFC3339),
+		Timestamp:   time.Unix(txTimestamp.Seconds, int64(txTimestamp.Nanos)).Format(time.RFC3339),
 	}
 
 	recordJSON, err := json.Marshal(updatedRecord)
@@ -152,6 +171,25 @@ func (s *HistoryContract) GetRecordHistory(ctx contractapi.TransactionContextInt
 	}
 
 	return records, nil
+}
+
+// QueryOtherLedger allows this contract to read data from a different channel's ledger.
+// Note: Cross-channel invocations are READ-ONLY. You cannot write to the other ledger.
+// This uses Fabric's internal gRPC protocol, not HTTP.
+func (s *HistoryContract) QueryOtherLedger(ctx contractapi.TransactionContextInterface, channelName string, chaincodeName string, functionName string, arg string) (string, error) {
+	// Arguments must be converted to [][]byte
+	// The first argument is the function name to call on the target chaincode
+	chainCodeArgs := [][]byte{[]byte(functionName), []byte(arg)}
+
+	// InvokeChaincode calls the specified chaincode on the specified channel
+	response := ctx.GetStub().InvokeChaincode(chaincodeName, chainCodeArgs, channelName)
+
+	// Check if the response status is OK (200)
+	if response.Status != 200 {
+		return "", fmt.Errorf("failed to query other ledger. Message: %s", response.Message)
+	}
+
+	return string(response.Payload), nil
 }
 
 // RecordExists returns true when asset with given ID exists in world state
