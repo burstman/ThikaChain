@@ -20,6 +20,7 @@ type VerificationRecord struct {
 	Party       string `json:"party"`     // The organization/user currently acting
 	Status      string `json:"status"`    // e.g., "CREATED", "VERIFIED", "REJECTED"
 	Timestamp   string `json:"timestamp"` // Application level timestamp
+	// You can add more fields here to match organization requirements (e.g., Location, BatchID)
 }
 
 // HistoryQueryResult structure used for returning history data
@@ -56,6 +57,38 @@ func (s *HistoryContract) InitLedger(ctx contractapi.TransactionContextInterface
 		}
 	}
 
+	return nil
+}
+
+// BatchImport allows uploading multiple records at once.
+// This is the correct way to import data fetched from an external API:
+// 1. The Client App (off-chain) fetches the data from the API.
+// 2. The Client App calls this function passing the data as a JSON string.
+func (s *HistoryContract) BatchImport(ctx contractapi.TransactionContextInterface, data string) error {
+	var records []VerificationRecord
+	if err := json.Unmarshal([]byte(data), &records); err != nil {
+		return fmt.Errorf("failed to unmarshal data: %v", err)
+	}
+
+	for _, record := range records {
+		assetJSON, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+
+		// Production Safety: Check if record exists to prevent accidental data loss
+		exists, err := s.RecordExists(ctx, record.ID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("record %s already exists - batch import aborted", record.ID)
+		}
+
+		if err := ctx.GetStub().PutState(record.ID, assetJSON); err != nil {
+			return fmt.Errorf("failed to put to world state for ID %s: %v", record.ID, err)
+		}
+	}
 	return nil
 }
 

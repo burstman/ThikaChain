@@ -161,3 +161,53 @@ func TestGetRecordHistory(t *testing.T) {
 	assert.Equal(t, "Draft", history[0].Record.Description)
 	t.Log("Verification of history record content passed")
 }
+
+func TestCreateRecordOrg3(t *testing.T) {
+	t.Log("Starting TestCreateRecordOrg3: Verifying creation for Org3")
+	ctx := new(MockTransactionContext)
+	stub := new(MockChaincodeStub)
+	clientIdentity := new(MockClientIdentity)
+
+	ctx.On("GetStub").Return(stub)
+	ctx.On("GetClientIdentity").Return(clientIdentity)
+
+	t.Log("Setting expectations: Checking if record exists and putting new state for Org3")
+	// Expectation: Record does not exist yet
+	stub.On("GetState", "REC003").Return(nil, nil)
+	clientIdentity.On("GetMSPID").Return("Org3MSP", nil)
+	stub.On("GetTxTimestamp").Return(timestamppb.Now(), nil)
+	stub.On("PutState", "REC003", mock.Anything).Return(nil)
+
+	t.Log("Invoking CreateRecord smart contract function as Org3...")
+	contract := new(HistoryContract)
+	err := contract.CreateRecord(ctx, "REC003", "Org3 Draft", "CREATED")
+
+	assert.NoError(t, err)
+	t.Log("CreateRecord returned no error for Org3")
+	stub.AssertExpectations(t)
+}
+
+func TestCreateRecordOrg4(t *testing.T) {
+	t.Log("Starting TestCreateRecordOrg4: Verifying creation for Org4")
+	ctx := new(MockTransactionContext)
+	stub := new(MockChaincodeStub)
+	clientIdentity := new(MockClientIdentity)
+
+	ctx.On("GetStub").Return(stub)
+	ctx.On("GetClientIdentity").Return(clientIdentity)
+
+	t.Log("Setting expectations: Checking if record exists and putting new state for Org4")
+	// Expectation: Record does not exist yet
+	stub.On("GetState", "REC004").Return(nil, nil)
+	clientIdentity.On("GetMSPID").Return("Org4MSP", nil)
+	stub.On("GetTxTimestamp").Return(timestamppb.Now(), nil)
+	stub.On("PutState", "REC004", mock.Anything).Return(nil)
+
+	t.Log("Invoking CreateRecord smart contract function as Org4...")
+	contract := new(HistoryContract)
+	err := contract.CreateRecord(ctx, "REC004", "Org4 Draft", "CREATED")
+
+	assert.NoError(t, err)
+	t.Log("CreateRecord returned no error for Org4")
+	stub.AssertExpectations(t)
+}
